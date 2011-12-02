@@ -1,0 +1,6 @@
+
+linux-3.1.2/scripts
+
+Kbuild.include:	echo do_not_rm1 rm -f $(depfile);
+Makefile.build:	echo do_not_rm2 rm -f $(depfile);
+
