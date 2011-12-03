@@ -1,0 +1,163 @@
+
+file: note-nbkparse
+2011-12-2
+
+
+Important Note
+===============
+
+Edit the configuration line in nbkparse script to make 
+sure the version in the script matches your linux source 
+directory name. If it does not match, it will generate 
+empty command files (see below about command files).
+
+
+Tree Structure
+===============
+
+topdir/linux-3.1.4  -- linux source directory
+topdir/objs         -- build linux into this directory
+
+topdir/mirror       -- will build a mirror of source files
+topdir/mirror/srcs  -- will put linux source files here in the mirror
+topdir/mirror/objs  -- will put linux generated files here in the mirror
+topdir/mirror/sys   -- will put linux system headers here in the mirror
+
+topdir/tools        -- where to run this script from
+
+
+Build Linux
+============
+
+[1] Follow the script change note to modify scripts. So that 
+    the linux build process will leave the dependency files 
+    in the objs directory. By default, all those dependency 
+    files are removed.
+
+[2] Under linux source directory, run 
+      "make O=../objs menuconfig"
+    Load the minimal config file, then save to ".config".
+
+[3] Under linux source directory, run
+      "make V=1 O=../objs > log-build"
+    The build commands will be saved into log-build file.
+
+[4] Under tools directory, run
+
+[4.1] "./nbkparse ../linux-3.1.4/log-build > mircmd" 
+      This command does a few things: 
+      - Parse the build log, select all the gcc command lines
+        so as to know all the C source files.
+      - Go through all the dependency files corresponding to the 
+        C source files, to know all the included files.
+      - Generate a list of commands to hard-link all the C files 
+        and header files from the source and objs directory to 
+        the mirror/srcs and mirror/objs directory. The commands 
+        are saved into "mircmd". 
+
+[4.2] "sh mircmd > log-gcc"
+      This command will run the commands to hard-link C and h files 
+      into mirror directory. 
+
+Now, the "mirror" directory contains a subset of kernel files 
+those are relevant to the specific linux build. And the file 
+"log-gcc" contains the corresponding modified gcc command lines 
+those appear to have built the source files under "mirror" directory. 
+We will use this "log-gcc" to pass information to NetBeans C IDE 
+so that it can correctly resolve macros in the files in the mirror. 
+
+
+NetBeans Installation
+======================
+
+Download NetBeans C/CPP IDE from this link:
+   http://netbeans.org/downloads/index.html
+
+I followed the link labeled "zip file format" at 
+   http://netbeans.org/downloads/zip.html
+to have downloaded this file: 
+   netbeans-7.0.1-201107282000-ml-cpp.zip 
+
+Also download Jave JRE following the link labeled 
+"latest Java at java.com". I downloaded the 
+"linux self extracting file": "jre-6u29-linux-i586.bin". 
+
+Install JRE and then unzip NetBeans into a directory. 
+Run "/path/to/netbeans/bin/netbeans --javahome /jre/path" 
+to start NetBeans. 
+
+
+NetBeans Project Setup
+=======================
+
+The NetBeans project structure will like this: 
+
+  /home/nbkuser/kern/mirror/srcs  -- linux src dir
+  /home/nbkuser/kern/mirror/objs  -- linux obj dir
+  /home/nbkuser/kern/mirror/sys   -- linux sys header dir
+
+  /home/nbkuser/kern/tools/log-gcc  -- the gcc log
+
+  /home/nbkuser/nbproj            -- the netbeans proj
+
+We will set NetBeans to think it runs the build from 
+inside .../mirror/objs directory, thus the log-gcc 
+command line will appear to have used files from 
+the .../mirror/srcs.
+
+To start with, create a Makefile under .../mirror to 
+have two empty targets: all and clean. 
+
+
+Steps to create a project in NetBeans:
+---------------------------------------
+
+[1] Start up NetBeans.
+[2] Create a new project, choose
+      "C/C++ Project with Existing Sources". 
+[3] Select mode to use existing source at ".../mirror". 
+    Select configuration mode "Custom" then "Next". 
+[4] Build tool to use existing .../mirror/Makefile. 
+[5] Build action use "mirror/objs" for "Working Directory". 
+    And use "../Makefile" instead of "Makefile". 
+[6] Source files use ".../mirror" directory.
+[7] Code assistance use "manual configuration", and remove 
+    the default include directory ".../mirror". 
+[8] Project name and location use "~/nbproj" as project location. 
+
+Once click "Finish", NetBeans will try to parse and analyze the project. 
+Wait till it finishes. Then re-configure code assistance to use 
+the log-gcc file. 
+
+If we open a C file now, we will see many symbol resolution erros. 
+After re-configuring it using the log-gcc, all those errors should 
+be resolved.
+
+Since we created Makefile with empty all and clean targets, the 
+log-gcc file will not be erased (I guess).
+
+
+Steps to configure code assistance using log-gcc:
+--------------------------------------------------
+
+[1] Right click the project node in projects pane. 
+    Choose "Code Assistance" - "Configure Code Assistance".
+[2] Select Advanced Mode.
+[3] Use .../mirror as source file root folder.
+    Select analyzer: Explore Make Log File.
+[4] Select make log file: point to .../tools/log-gcc.
+[5] Configuration Level: Configure File Properties.
+[6] Once clicked "Next", the "Configurateion" box should 
+    quickly shows a tree of "C (555 files)" for the 
+    min config build. If it takes a long time to show 
+    how many C files (spinning a long time), it may be 
+    that some the gcc lines in log-gcc is not recognized 
+    by NetBeans. You need to figure which line and which 
+    option causes the problem and fix it in the parsing 
+    scripts. 
+[7] Click "Finish", NetBeans will re-parse the project. 
+    When it finishes, all the unresolved errors should 
+    disappear. And the "Code Assistance" - "Failed #include/#error 
+    Directives" shall be greyed out. 
+
+ 
