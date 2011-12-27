@@ -1,0 +1,21 @@
+
+note-kernel2.6.28.10  2011-12-26
+
+
+Compiling Kernel 2.6.28.10 on Fedora 16 Using gcc 4.6:
+=======================================================
+
+More modifications are needed to compile successfully. 
+(In addition to scripts/Kbuild.include and Makefile.build).
+
+[1] Makefile: 
+    Line 442, change "config %config:" to "%config". 
+    Line 1610, change "/ %/:" to "%/". 
+
+[2] arch/x86/vdso/Makefile: 
+    Line 72, change "-m elf_i386" to "-melf_i386".
+
+[3] kernel/mutex.c:
+    Change "__mutex_lock_slowpath" and "__mutex_unlock_slowpath" 
+    into extern global.
+

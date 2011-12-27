@@ -1,0 +1,297 @@
+#!/usr/bin/perl -w
+# nbkparse004 -- nbkparse version 0.05
+
+use strict;
+
+##############################################################################
+# configureation:
+my $linuxdir = "linux-2.6.28.10"; # config, the linux src base dir
+
+##############################################################################
+# globals:
+my $toolsdir = `pwd`;
+    if ($toolsdir !~ m|(.*)/tools$| ) { die "must be under tools dir\n"; }
+my $topdir = $1;
+
+# tree:
+my $srcbase = $topdir."/".$linuxdir;     # e.g. /home/nbkuser/kern/linux-3.1.2
+my $srcnew  = $topdir."/"."mirror/srcs"; # e.g. /home/nbkuser/kern/mirror/srcs
+my $objbase = $topdir."/"."objs";        # e.g. /home/nbkuser/kern/objs
+my $objnew  = $topdir."/"."mirror/objs"; # e.g. /home/nbkuser/kern/mirror/objs
+my $sysnew  = $topdir."/"."mirror/sys";  # e.g. /home/nbkuser/kern/mirror/sys
+
+##############################################################################
+# read kernel build log:
+
+    if ($#ARGV < 0) { die "must specify input kernel build log file\n"; }
+my $infile = $ARGV[0];
+    if ( ! -f $infile || ! -e $infile) { die "input log not exist.\n"; }
+    open INFILE, "<$infile" || die "can not open $infile\n";
+my @inlines=<INFILE>;
+    close INFILE;
+
+##############################################################################
+# parsing:
+print STDERR "parsing kernel build log file...\n";
+printf("#!/bin/bash\n");
+my @srcm = flt1(@inlines);
+    foreach my $i (@srcm) { 
+        my $cmd = $i->[3];
+        #printf( "#  src c  %s %38s %38s  %s\n", $i->[0], $i->[1], $i->[2], $cmd); 
+    }
+print STDERR "parsing dep files ...\n";
+my @depm = flt2(@srcm);
+    foreach my $i (@depm) {
+        #printf( " dep file: %s\n", $i);
+    }
+my %hdrm = flt3(@depm);
+    my @ks = keys(%hdrm);
+    printf("#  num hdrs: %d \n",  $#ks +1);
+    foreach my $i (@ks) {
+        #printf( " hdr file: %3d %s\n", $hdrm{$i}, $i);
+    }
+
+print STDERR "generating mirroring commands ...\n";
+gen_mir_cmd();
+print STDERR "done\n\n";
+print STDERR "Please run the mirroring command shell, \n";
+print STDERR "    and save output as a gcc log.\n\n";
+
+exit 0;
+
+##############################################################################
+# subs:
+
+sub gen_mir_cmd {
+    printf("#### mirror srcs c files:\n");
+    foreach my $i (@srcm) {
+        my $f = $i->[1];
+        my $fsrc = $srcbase.'/'.$f;
+        my $fdst = $srcnew.'/'.$f;
+        my $dstdir = $fdst; $dstdir =~ s|^(.*)/\S+|$1|;
+        printf(" if [ ! -d $dstdir ]; then mkdir -p $dstdir;     fi\n"); 
+        printf(" if [ ! -f $fdst   ]; then ln       $fsrc $fdst; fi\n"); 
+        printf(" echo $i->[3]\n");
+    }
+    printf("#### mirror deps h/c files:\n");
+    foreach my $i (@ks) {
+        my $f = $i;
+        my $fsrc = $f;
+        my $fdst = $fsrc;
+
+        if ($fdst =~ m|^$srcbase.*|) {
+            $fdst =~ s|$srcbase|$srcnew|g ;
+        } elsif ($fdst =~ m|^$objbase.*|) {
+            $fdst =~ s|$objbase|$objnew|g ;
+        } else {
+            $fdst = $sysnew.$fdst;
+        }
+
+        my $dstdir = $fdst; $dstdir =~ s|^(.*)/\S+|$1|;
+        printf(" if [ ! -d $dstdir ]; then mkdir -p $dstdir;     fi\n"); 
+        printf(" if [ ! -f $fdst   ]; then ln       $fsrc $fdst; fi\n"); 
+    }
+}
+
+sub flt3_dep { # go over all dep files to find out all .h files
+    my $f = shift;
+    open INF, "<$f" || die "can no open dep file $f\n";
+    my @lines = <INF>;
+    close INF;
+    my @hfiles = ();
+    my $state = 0;
+    while(@lines) {
+        my $i = shift @lines;
+        if ( $state == 0 ) {
+            if (      $i =~ m|^.*\.o: (\S+\.c.* \\)$| ) {
+                my $res = $1;
+                unshift @lines, $res;
+                $state = 1;
+            } elsif ( $i =~ m|^.*\.o: \\$| ) {
+                $state = 1;
+            } else {
+                die "unknown 1st line file $f: $i\n";
+            }
+        } elsif ( $state == 1 ) {
+            if (      $i =~ m|^\s*\S+\.c\s+(\S+\s*\\)$| ) {
+                my $res = $1;
+                unshift @lines, $res;
+                $state = 2;
+            } elsif ( $i =~ m|^\s*\S+\.c\s+\\$| ) {
+                $state = 2;
+            } else {
+                die "unknown 2nd line file $f: $i\n";
+            }
+        } elsif ( $state == 2 ) {
+            my $dep = 0;
+            if (      $i =~ m|^\s*(\S+)\s*\\$|  ||  
+                      $i =~ m|^\s*(\S+)\s*$|        ) {
+                $dep = $1;
+                $dep = $objbase.'/'.$dep if ($dep !~ m|^/.*| );
+                die "unknown dep file $f line $i\n" 
+                        if ( $dep !~ m|.*\.c| && $dep !~ m|.*\.h|);
+            } elsif ( $i =~ m|^\s*(\S+)\s+(\S+.*)$|    ) {
+                $dep = $1;
+                my $res = $2;
+                $dep = $objbase.'/'.$dep if ($dep !~ m|^/.*| );
+                die "unknown dep file $f line $i\n" 
+                        if ( $dep !~ m|.*\.c| && $dep !~ m|.*\.h|);
+                unshift @lines, $res;
+            } else {
+                die "unknown dep file $f line $i\n";
+            }
+            push @hfiles, $dep if ($dep);
+        }
+    }
+    return @hfiles;
+}
+
+sub flt3 { #
+    my @deps = @_;
+    my %h = ();
+    my $depfcnt = 0;
+    foreach my $d (@deps) {
+        die "no dep file $d\n" if ( ! -f $objbase.'/'.$d );
+        my @hs = flt3_dep($objbase.'/'.$d);
+        foreach my $hf (@hs) {
+            if ( ! exists( $h{$hf} ) ) {
+                $h{$hf} = 1;
+            } else {
+                $h{$hf} ++;
+            }
+            if ( $hf =~ m|.*//.*| ) { die " double // $d $hf\n"; }
+        }
+        if ( ((++ $depfcnt) % 100) == 0 ) { 
+            print STDERR "processed $depfcnt depfiles\n"; 
+        }
+    }
+    return %h;
+}
+
+sub flt2 { # go over all dep files to gather a list of .h files
+    my @srcs = @_;
+    my @deps = ();
+    foreach my $i (@srcs) {
+        my $c = $i->[1];
+        my $d = "";
+        if ( $c =~ m|(.*/)(\S+)\.c| ) {
+           $d = $1.'.'.$2.'.o.d';
+           push @deps, $d;
+           #printf("  dep file: %s \n", $d);
+        } else {
+           die "not a .c file\n";
+        }
+    }
+    return @deps;
+}
+
+sub flt1 { # get gcc command line, src, and obj
+    my @lines = @_;
+    my @srcsdots = (); # src .S.o
+    my @srcsdotc = (); # src .c.o
+    my @objsdots = (); # obj .S.o
+    my @objsdotc = (); # obj .c.o
+    my @scripts  = (); # scripts
+    my @others   = (); # other gcc lines
+    
+    foreach my $line (@lines) {
+       if ( $line =~ m|^\s*gcc\s+(.*)$| ) {
+          my $args = $1;
+          if ( $args =~ m|^(.*)-o\s+(\S+)\s+($srcbase)/(\S+)\s*$| ) {
+             my ($ofile, $srcfile) = ($2,$4);
+             #printf " -- gcc %-38s  srcs  %-38s\n", $ofile, $srcfile;   
+             my $arry = [];
+             if ( $srcfile =~ m|.*\.c$| && $ofile =~ m|.*\.o$| ) {
+                 $arry->[0] = "srcs";
+                 $arry->[1] = $srcfile;
+                 $arry->[2] = $ofile;
+                 $arry->[3] = $line;
+                 if ( $srcfile =~ m|^scripts/| ) {
+                     push @scripts, $arry;
+                 } else {
+                     push @srcsdotc, $arry;
+                 }
+             } elsif ( $srcfile =~ m|.*\.S$| && $ofile =~ m|.*\.o$| ) {
+                 $arry->[0] = "srcs";
+                 $arry->[1] = $srcfile;
+                 $arry->[2] = $ofile;
+                 $arry->[3] = $line;
+                 push @srcsdots, $arry;
+             }
+          } elsif ( $args =~ m|^(.*)-o\s+(\S+)\s+(\S+)\s*$| ) {
+             my ($ofile, $srcfile) = ($2,$3);
+             #printf " -- gcc %-38s  objs  %-38s\n", $ofile, $srcfile;   
+             my $arry = [];
+             if ( $srcfile =~ m|.*\.c$| && $ofile =~ m|.*\.o$| ) {
+                 $arry->[0] = "objs";
+                 $arry->[1] = $srcfile;
+                 $arry->[2] = $ofile;
+                 $arry->[3] = $line;
+                 push @objsdotc, $arry;
+             } elsif ( $srcfile =~ m|.*\.S$| && $ofile =~ m|.*\.o$| ) {
+                 $arry->[0] = "objs";
+                 $arry->[1] = $srcfile;
+                 $arry->[2] = $ofile;
+                 $arry->[3] = $line;
+                 push @objsdots, $arry;
+             }
+          } else {
+             #printf " ++++ %s", $line;
+             push @others, $line;
+          }
+       } else { # non gcc lines: just skip
+          #printf " ++++ %s", $line;
+       }
+    }
+    
+    #foreach my $i (@srcsdots) { printf( "  src s  %s %38s %38s \n", $i->[0], $i->[1], $i->[2]); }
+    foreach my $i (@srcsdotc) { 
+        my $cmd = $i->[3];
+        $cmd =~ s|$srcbase|$srcnew|g; # modify gcc command for mirrored paths.
+        #printf( "  src c  %s %38s %38s  %s\n", $i->[0], $i->[1], $i->[2], $cmd); 
+        $i->[3] = $cmd;
+    }
+    #foreach my $i (@objsdots) { printf( "  obj s  %s %38s %38s \n", $i->[0], $i->[1], $i->[2]); }
+    #foreach my $i (@objsdotc) { printf( "  obj c  %s %38s %38s \n", $i->[0], $i->[1], $i->[2]); }
+    #foreach my $i (@scripts)  { printf( "  scripts  %s %38s %38s \n", $i->[0], $i->[1], $i->[2]); }
+    #foreach my $i (@others)   { printf( "    %s %38s \n", "others", $i); }
+    return @srcsdotc;
+}
+
+__END__
+
+# gcc -Wp,-MD,arch/x86/kernel/.irq.o.d  
+      -nostdinc 
+      -isystem /usr/lib/gcc/i686-redhat-linux/4.5.1/include 
+      -I/home/nbkuser/kern/linux-3.1.4/arch/x86/include 
+      -Iarch/x86/include/generated 
+      -Iinclude  
+      -I/home/nbkuser/kern/linux-3.1.4/include 
+      -include /home/nbkuser/kern/linux-3.1.4/include/linux/kconfig.h  
+      -I/home/nbkuser/kern/linux-3.1.4/arch/x86/kernel 
+      -Iarch/x86/kernel 
+      -D__KERNEL__ 
+      -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs -fno-strict-aliasing 
+      
+      -fno-common -Werror-implicit-function-declaration -Wno-format-security 
+      -fno-delete-null-pointer-checks -Os -m32 -msoft-float -mregparm=3 
+      -freg-struct-return -mpreferred-stack-boundary=2 -march=i686 
+      -Wa,-mtune=generic32 -ffreestanding 
+
+      -DCONFIG_AS_CFI=1 
+      -DCONFIG_AS_CFI_SIGNAL_FRAME=1 
+      -DCONFIG_AS_CFI_SECTIONS=1 
+
+      -pipe -Wno-sign-compare -fno-asynchronous-unwind-tables -mno-sse 
+      -mno-mmx -mno-sse2 -mno-3dnow -Wframe-larger-than=1024 
+      -fno-stack-protector -Wno-unused-but-set-variable -fomit-frame-pointer 
+      -Wdeclaration-after-statement -Wno-pointer-sign -fno-strict-overflow 
+      -fconserve-stack 
+
+      -DCC_HAVE_ASM_GOTO    
+      -D"KBUILD_STR(s)=#s" 
+      -D"KBUILD_BASENAME=KBUILD_STR(irq)"  
+      -D"KBUILD_MODNAME=KBUILD_STR(irq)" 
+
+      -c -o arch/x86/kernel/irq.o /home/nbkuser/kern/linux-3.1.4/arch/x86/kernel/irq.c
+
